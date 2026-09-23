@@ -1,9 +1,18 @@
 //! 统一会话模型：所有适配器最终归一到 Session / Message。
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 pub const MAX_TEXT: usize = 200 * 1024;
+
+/// 时间戳容忍反序列化：Node 版索引库里个别列存的是 REAL（mtimeMs 浮点），读回时取整。
+fn de_ts_opt<'de, D>(d: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v: Option<f64> = Option::deserialize(d)?;
+    Ok(v.map(|f| f.round() as i64))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Session {
@@ -16,9 +25,9 @@ pub struct Session {
     pub path_source: String,
     #[serde(default)]
     pub title: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_ts_opt")]
     pub created_at: Option<i64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_ts_opt")]
     pub updated_at: Option<i64>,
     #[serde(default)]
     pub bytes: u64,

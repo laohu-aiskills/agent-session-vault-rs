@@ -83,6 +83,63 @@ enum Cmd {
         #[arg(long)]
         index: Option<PathBuf>,
     },
+    /// 导出为 Markdown / HTML
+    Export {
+        uid: String,
+        #[arg(long)]
+        out: PathBuf,
+        /// md | html（默认按扩展名推断）
+        #[arg(long)]
+        format: Option<String>,
+        #[arg(long)]
+        index: Option<PathBuf>,
+    },
+    /// 原样备份（含 SQLite 的 wal/shm）
+    Backup {
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        agent: Option<String>,
+        /// 目标目录已有备份时允许覆盖
+        #[arg(long)]
+        force: bool,
+    },
+    /// 还原。默认只演练；--apply 才写入
+    Restore {
+        dir: PathBuf,
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        uid: Option<String>,
+        /// 目标家目录（跨机器还原时重映射前缀）
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// 校验 sha256
+        #[arg(long)]
+        verify: bool,
+        /// 真正写入
+        #[arg(long)]
+        apply: bool,
+        /// 显式确认写入（--apply 时必填）
+        #[arg(long)]
+        yes: bool,
+        /// 允许覆盖已存在文件
+        #[arg(long)]
+        overwrite: bool,
+    },
+    /// 跨 Agent 迁移（仅保真文本，详见输出提示）
+    Migrate {
+        uid: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        out: PathBuf,
+        /// 不清洗：连工具调用/推理一起写入（目标未必能解析）
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        index: Option<PathBuf>,
+    },
 }
 
 fn default_index() -> PathBuf {
@@ -128,6 +185,12 @@ fn run(cmd: Cmd) -> anyhow::Result<()> {
         Cmd::Search { query, agent, kind, limit, json, index } => {
             cmd_search(query, agent, kind, limit, json, &index)
         }
+        Cmd::Export { uid, out, format, index } => cmd_export(uid, &out, format.as_deref(), &index),
+        Cmd::Backup { out, agent, force } => cmd_backup(out, agent, force),
+        Cmd::Restore { dir, agent, uid, target, verify, apply, yes, overwrite } => {
+            cmd_restore(&dir, agent, uid, target.as_deref(), verify, apply, yes, overwrite)
+        }
+        Cmd::Migrate { uid, to, out, force, index } => cmd_migrate(uid, &to, &out, force, &index),
     }
 }
 
@@ -380,4 +443,168 @@ fn truncate(s: &str, n: usize) -> String {
     } else {
         s.to_string()
     }
+}
+
+fn cmd_export(uid: String, out: &PathBuf, format: Option<&str>, index: &Option<PathBuf>) -> anyhow::Result<()> {
+    let db = open_index(index)?;
+    let Some((session, messages)) = db.get_session(&uid) else {
+        anyhow::bail!("未找到会话：{uid}");
+    };
+    let session: asv_core::model::Session = serde_json::from_value(session)?;
+    let messages: Vec<asv_core::model::Message> = messages
+        .into_iter()
+        .map(|m| serde_json::from_value(m))
+        .collect::<Result<_, _>>()?;
+    let (file, fmt, bytes) = asv_core::export::export_session(&session, &messages, out, format)?;
+    println!("导出成功");
+    println!("  文件  {}", file.display());
+    println!("  格式  {fmt}  {}", util::human_size(bytes));
+    println!("  内容  {} 条消息", messages.len());
+    Ok(())
+}
+
+fn cmd_backup(out: PathBuf, agent: Option<String>, force: bool) -> anyhow::Result<()> {
+    if out.join("manifest.json").exists() && !force {
+        anyhow::bail!(
+            "目标目录已存在备份：{}\n  如需覆盖请加 --force（旧备份不会被自动删除）",
+            out.display()
+        );
+    }
+    let mut provs = resolve_providers(&agent)?;
+    let n = std::cell::Cell::new(0u32);
+    let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let r = asv_core::backup::backup(&mut provs, &out, agent.as_deref(), |rel, _size| {
+        let c = n.get() + 1;
+        n.set(c);
+        if tty && c % 10 == 0 {
+            eprint!("\r  已复制 {} 个文件…", c);
+        }
+        let _ = rel;
+    });
+    let r = match r {
+        Ok(r) => r,
+        Err(e) => anyhow::bail!(e),
+    };
+    if tty {
+        eprint!("\r{}", " ".repeat(40));
+        eprintln!("\r");
+    }
+    let s = &r.manifest["summary"];
+    println!("备份完成");
+    println!("  目录  {}", r.out.display());
+    println!("  会话  {}", s["sessions"].as_i64().unwrap_or(0));
+    println!("  文件  {} 个，{}", s["files"].as_i64().unwrap_or(0), util::human_size(s["bytes"].as_u64().unwrap_or(0)));
+    let errors = s["errors"].as_i64().unwrap_or(0);
+    if errors > 0 {
+        println!("  错误 {errors} 个（详见 manifest.json 的 errors 字段）");
+    }
+    println!();
+    println!("  还原请用：asv restore <备份目录> --apply");
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_restore(
+    dir: &PathBuf,
+    agent: Option<String>,
+    uid: Option<String>,
+    target: Option<&std::path::Path>,
+    verify: bool,
+    apply: bool,
+    yes: bool,
+    overwrite: bool,
+) -> anyhow::Result<()> {
+    if !apply {
+        let p = asv_core::restore::plan_restore(dir, agent.as_deref(), uid.as_deref(), target.map(|p| p.to_str().unwrap_or("")), verify)?;
+        println!("还原演练（未写入任何文件）\n");
+        println!("  备份创建于  {}", p.manifest["createdAt"].as_i64().map(util::format_time).unwrap_or_else(|| "-".into()));
+        println!("  源机器      {}  家目录 {}", p.manifest["host"].as_str().unwrap_or(""), p.src_home);
+        if let Some(t) = &p.target {
+            println!("  目标家目录  {t}（路径前缀已重映射）");
+        }
+        println!("  会话        {} 个", p.sessions);
+        println!("  文件        {} 个，{}", p.items.len(), util::human_size(p.bytes));
+        println!("  将覆盖      {} 个已存在文件", p.conflicts);
+        if p.missing > 0 {
+            println!("  备份内缺失 {} 个文件", p.missing);
+        }
+        println!();
+        println!("  待写入清单：");
+        for it in p.items.iter().take(40) {
+            println!("    [{}]  {}", if it.conflict { "覆盖" } else { "新建" }, it.dest.display());
+        }
+        if p.items.len() > 40 {
+            println!("    … 其余 {} 个", p.items.len() - 40);
+        }
+        println!();
+        println!("  以上仅为演练。确认无误后加 --apply 才会真正写入。");
+        if p.conflicts > 0 {
+            println!("  覆盖已存在文件还需额外加 --overwrite。");
+        }
+        return Ok(());
+    }
+
+    if !yes {
+        let p = asv_core::restore::plan_restore(dir, agent.as_deref(), uid.as_deref(), target.map(|p| p.to_str().unwrap_or("")), verify)?;
+        println!("即将写入 {} 个文件，其中覆盖 {} 个已存在文件。", p.items.len(), p.conflicts);
+        println!("  非交互环境不会自动确认：请显式加 --yes 表示你已确认。");
+        println!("  建议先不加 --apply 运行一次，查看完整清单。");
+        return Ok(());
+    }
+
+    let p = asv_core::restore::plan_restore(dir, agent.as_deref(), uid.as_deref(), target.map(|p| p.to_str().unwrap_or("")), verify)?;
+    if p.conflicts > 0 && !overwrite {
+        println!("检测到 {} 个已存在文件，未授权覆盖，这些文件将被跳过。", p.conflicts);
+        println!("  如需覆盖请加 --overwrite。");
+    }
+    let result = asv_core::restore::apply_restore(&p, overwrite);
+    println!("还原执行完毕");
+    println!("  写入  {}", result.written);
+    println!("  跳过  {}{}", result.skipped, if result.skipped > 0 { "（冲突未授权覆盖）" } else { "" });
+    println!("  失败  {}", result.failed);
+    let bad: Vec<_> = result.details.iter().filter(|(s, _)| s != "written" && s != "conflict-skipped").collect();
+    for (status, dest) in bad.iter().take(20) {
+        println!("    [{status}]  {dest}");
+    }
+    Ok(())
+}
+
+fn cmd_migrate(uid: String, to: &str, out: &PathBuf, force: bool, index: &Option<PathBuf>) -> anyhow::Result<()> {
+    let db = open_index(index)?;
+    let Some((session, messages)) = db.get_session(&uid) else {
+        anyhow::bail!("未找到会话：{uid}（请先 asv index）");
+    };
+    let session: asv_core::model::Session = serde_json::from_value(session)?;
+    let messages: Vec<asv_core::model::Message> = messages
+        .into_iter()
+        .map(|m| serde_json::from_value(m))
+        .collect::<Result<_, _>>()?;
+
+    let r = asv_core::migrate::migrate(&session, &messages, to, out, !force)?;
+    if !force {
+        let lost = &r.report["lostBreakdown"];
+        println!("迁移产出完成");
+        println!("  目标  {}（{} 方言）", r.target.label, if r.target.dialect == asv_core::migrate::Dialect::Claude { "claude" } else { "codebuddy" });
+        println!("  文件  {}", r.file.display());
+        println!("  说明  {}", r.note_file.display());
+        println!("  保留  {} 条文本消息", r.wrote_messages);
+        println!();
+        println!("  ⚠ 内容损失（格式不兼容，无法恢复）：");
+        println!(
+            "    工具调用 {} 条、工具结果 {} 条、推理过程 {} 条",
+            lost["tool_call"].as_i64().unwrap_or(0),
+            lost["tool_result"].as_i64().unwrap_or(0),
+            lost["reasoning"].as_i64().unwrap_or(0)
+        );
+        println!("    源会话共 {} 条消息，仅 {} 条被保留", messages.len(), r.report["keptMessages"].as_i64().unwrap_or(0));
+        println!();
+        println!("  下一步：把产出目录复制到目标 Agent 的项目根目录");
+        println!("    {}", r.target.project_root().display());
+        println!("  注意：本工具不会改写目标 Agent 的会话索引库，其会话列表可能不会立即显示这条会话。");
+        return Ok(());
+    }
+    println!("迁移产出完成（--force，不做清洗）");
+    println!("  文件  {}", r.file.display());
+    println!("  已使用 --force：工具调用与推理块被原样写入，目标 Agent 可能无法解析这些块。");
+    Ok(())
 }

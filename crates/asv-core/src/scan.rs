@@ -22,9 +22,19 @@ pub struct Discovered {
 }
 
 pub fn discover_all(providers: &mut [Provider]) -> Discovered {
+    discover_all_filtered(providers, None)
+}
+
+/// only=Some(ids) 时只发现指定 provider（备份 --agent 用）。
+pub fn discover_all_filtered(providers: &mut [Provider], only: Option<&[String]>) -> Discovered {
     let mut sessions = Vec::new();
     let mut agents = Vec::new();
     for p in providers.iter_mut() {
+        if let Some(list) = only {
+            if !list.iter().any(|id| id == p.id()) {
+                continue;
+            }
+        }
         let detect = p.detect();
         let mut entry = AgentEntry {
             available: detect.available,

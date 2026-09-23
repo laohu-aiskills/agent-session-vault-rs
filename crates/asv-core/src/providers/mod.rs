@@ -67,6 +67,19 @@ impl Provider {
         matches!(self, Provider::Restricted(_))
     }
 
+    /// 备份时需要原样打包的路径。
+    pub fn original_paths(&self, session: &Session) -> Vec<std::path::PathBuf> {
+        match self {
+            Provider::Jsonl(p) => p.original_paths(session),
+            Provider::Codex(p) => p.original_paths(session),
+            Provider::Pi(p) => p.original_paths(session),
+            Provider::KimiCli(p) => p.original_paths(session),
+            Provider::KimiCode(p) => p.original_paths(session),
+            Provider::Sqlite(p) => p.original_paths(),
+            Provider::Restricted(_) => Vec::new(),
+        }
+    }
+
     pub fn detect(&self) -> Detect {
         let restricted = self.restricted();
         let (available, root, reason, installed) = match self {
