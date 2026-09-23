@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/asv-core", "crates/asv-cli"]
+members = ["crates/asv-core", "crates/asv-cli", "crates/asv-gui"]
 
 [workspace.package]
 version = "0.1.0"

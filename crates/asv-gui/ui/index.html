@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Agent Session Vault (Rust)</title>
+<style>
+:root{
+  --bg:#f6f6f4; --panel:#fff; --line:#e4e4df; --line-soft:#eeeeea;
+  --txt:#1f1f1d; --txt2:#6b6b66; --txt3:#96968f;
+  --blue:#185fa5; --blue-bg:#e6f1fb;
+  --amber:#854f0b; --amber-bg:#faeeda; --red:#a32d2d; --red-bg:#fcebeb;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--txt);display:flex;flex-direction:column;overflow:hidden;
+  font:13.5px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+button{font:inherit;cursor:pointer;border-radius:7px;border:1px solid var(--line);background:#fff;
+  color:var(--txt);padding:5px 11px}
+button:hover{background:#fafaf8}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,select{font:inherit;background:#fff;border:1px solid var(--line);border-radius:7px;padding:5px 10px;outline:none}
+header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel);
+  border-bottom:1px solid var(--line)}
+.brand{font-weight:500;white-space:nowrap}
+#q{flex:1}
+main{flex:1;display:flex;min-height:0}
+#left{width:390px;flex:0 0 390px;border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
+#listHead{padding:8px 12px;border-bottom:1px solid var(--line-soft);font-size:12px;color:var(--txt2);
+  display:flex;justify-content:space-between;align-items:center;gap:8px}
+#listCount{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#listHead .tools{display:flex;gap:4px;align-items:center}
+.minisel{border:1px solid transparent;background:transparent;color:var(--txt2);font-size:12px;padding:2px 4px;border-radius:6px;cursor:pointer}
+.minisel:hover{background:#f0f0ec;color:var(--txt)}
+#list{flex:1;overflow-y:auto}
+.item{padding:9px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer}
+.item:hover{background:#fafaf8}
+.item.active{background:var(--blue-bg);border-left:3px solid var(--blue);padding-left:9px}
+.item .t{font-weight:500;margin-bottom:2px;word-break:break-word}
+.item .m{font-size:11.5px;color:var(--txt3);display:flex;gap:6px;flex-wrap:wrap}
+.pill{display:inline-block;padding:0 6px;border-radius:4px;font-size:11px;line-height:17px;background:#f0f0ec;color:var(--txt2)}
+.pill.blue{background:var(--blue-bg);color:var(--blue)}
+#right{flex:1;display:flex;flex-direction:column;min-width:0}
+#detailBar{display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+#detailTitle{font-weight:500;flex:1;min-width:120px;word-break:break-word}
+#detail{flex:1;overflow-y:auto;padding:14px}
+.meta{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:12px}
+.meta table{border-collapse:collapse;width:100%}
+.meta td{padding:2px 0;font-size:12.5px;vertical-align:top}
+.meta td:first-child{width:88px;color:var(--txt2)}
+.meta code{font-family:ui-monospace,Consolas,monospace;font-size:12px;background:#f0f0ec;padding:1px 5px;border-radius:4px;word-break:break-all}
+.msg{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 13px;margin-bottom:9px}
+.msg.user{border-left:3px solid var(--blue)}
+.msg.assistant{border-left:3px solid #0f6e56}
+.msg.tool{border-left:3px solid #b4b2a9}
+.mh{display:flex;gap:7px;font-size:11.5px;color:var(--txt3);margin-bottom:5px}
+.mh .seq{background:#f0f0ec;border-radius:5px;min-width:20px;text-align:center;color:var(--txt2);font-weight:500}
+.body{white-space:pre-wrap;word-break:break-word;font-size:13px}
+pre{margin:4px 0 0;padding:8px 10px;background:#fafaf8;border:1px solid var(--line-soft);border-radius:7px;
+  overflow-x:auto;font:12px/1.55 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:360px;overflow-y:auto}
+details summary{cursor:pointer;font-size:12px;color:var(--txt2)}
+.empty{padding:36px 20px;text-align:center;color:var(--txt3)}
+dialog{border:1px solid var(--line);border-radius:12px;padding:0;background:var(--panel);width:560px;max-width:92vw;box-shadow:0 12px 40px rgba(0,0,0,.14)}
+dialog::backdrop{background:rgba(30,30,28,.32)}
+.dlg{padding:16px 18px}
+.dlg h3{margin:0 0 10px;font-size:15px;font-weight:500}
+.dlg .row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.foot{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.warn{background:var(--red-bg);color:var(--red);border-radius:8px;padding:8px 10px;font-size:12.5px;margin-bottom:8px}
+#status{padding:6px 14px;background:var(--panel);border-top:1px solid var(--line);font-size:12px;
+  color:var(--txt2);display:flex;gap:14px;align-items:center}
+#status .grow{flex:1}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--blue);border-top-color:transparent;
+  border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Agent Session Vault <small style="color:var(--txt3)">Rust</small></div>
+  <input id="q" placeholder="全文检索（回车或点 🔍；2 字以内走扫描）" autocomplete="off">
+  <select id="agentFilter"><option value="">全部 Agent</option></select>
+  <button id="btnSearch">🔍</button>
+  <button id="btnRefresh">↻ 刷新</button>
+  <label><input type="checkbox" id="autoRefresh" style="width:auto"> 自动</label>
+  <select id="autoEvery"><option value="10">10s</option><option value="30" selected>30s</option><option value="60">60s</option></select>
+</header>
+<main>
+  <div id="left">
+    <div id="listHead">
+      <span id="listCount">加载中…</span>
+      <span class="tools">
+        <select id="orderSel" class="minisel"><option value="updated">更新时间</option><option value="created">创建时间</option></select>
+        <select id="dirSel" class="minisel"><option value="desc">新→旧</option><option value="asc">旧→新</option></select>
+      </span>
+    </div>
+    <div id="list"></div>
+  </div>
+  <div id="right">
+    <div id="detailBar">
+      <span id="detailTitle">未选择会话</span>
+      <button id="btnTerm" disabled title="在会话项目目录打开终端">终端继续</button>
+    </div>
+    <div id="detail"><div class="empty">从左侧选择一个会话查看消息流</div></div>
+  </div>
+</main>
+<div id="status">
+  <span id="stAgents">-</span>
+  <span id="stRefresh"></span>
+  <span class="grow"></span>
+  <span id="stIndex">-</span>
+</div>
+<dialog id="dlg"><div class="dlg" id="dlgBody"></div></dialog>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const invoke = window.__TAURI__.core.invoke;
+const KIND = {text:'',reasoning:'推理',tool_call:'工具调用',tool_result:'工具结果',meta:'元信息'};
+const ROLE = {user:'用户',assistant:'助手',system:'系统',tool:'工具'};
+const RESUME = {
+  'claude-code': {bin:'claude', resume:sid=>`--resume ${sid}`, last:'-c', yolo:'--dangerously-skip-permissions', yoloLabel:'跳过权限确认（--dangerously-skip-permissions）'},
+  'codex': {bin:'codex', resume:sid=>`resume ${sid}`, last:'resume --last', yolo:'--dangerously-bypass-approvals-and-sandbox', yoloLabel:'跳过审批与沙箱（--dangerously-bypass-approvals-and-sandbox）'},
+};
+let current = null;
+let agentLabels = {};
+let autoTimer = null;
+let refreshing = false;
+
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function fmtTok(n){if(!Number.isFinite(n)||n<=0)return '';if(n>=1e6)return (n/1e6).toFixed(1)+'M';if(n>=1e3)return (n/1e3).toFixed(1)+'k';return String(Math.round(n))}
+function ts(v){if(!v)return '-';const d=new Date(v),p=x=>String(x).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`}
+function parseMeta(s){if(typeof s==='string'){try{return JSON.parse(s||'{}')}catch{return {}}}return s||{}}
+function openDlg(h){$('#dlgBody').innerHTML=h;$('#dlg').showModal()}
+function closeDlg(){$('#dlg').close()}
+
+function msgHtml(m){
+  const kind = KIND[m.kind]||m.kind;
+  let body;
+  if(m.kind==='tool_call') body = `<pre>${esc(String(m.text||'').slice(0,20000))}</pre>`;
+  else if(m.kind==='tool_result') body = `<pre>${esc(String(m.text||'').slice(0,20000))}</pre>`;
+  else if(m.kind==='reasoning') body = `<details><summary>展开推理过程</summary><pre>${esc(m.text||'')}</pre></details>`;
+  else body = `<div class="body">${esc(m.text||'')}</div>`;
+  return `<div class="msg ${m.role}"><div class="mh"><span class="seq">${m.seq}</span>
+    <span class="role">${esc(ROLE[m.role]||m.role)}</span>${kind?`<span class="pill">${kind}</span>`:''}
+    <span style="margin-left:auto">${ts(m.ts)}</span></div>${body}</div>`;
+}
+
+async function loadAgents(){
+  const agents = await invoke('agents');
+  const sel = $('#agentFilter');
+  sel.innerHTML = '<option value="">全部 Agent</option>';
+  agentLabels = {};
+  let readable = 0, total = 0;
+  for(const a of agents){
+    agentLabels[a.id] = a.label;
+    if(a.available && !a.restricted){
+      readable++; total += a.count||0;
+      const o = document.createElement('option');
+      o.value = a.id; o.textContent = `${a.label}（${a.count}）`;
+      sel.appendChild(o);
+    }
+  }
+  $('#stAgents').textContent = `可读来源 ${readable} 家 · ${total} 个会话`;
+}
+
+async function loadStats(){
+  const st = await invoke('stats');
+  $('#stIndex').textContent = st.sessions
+    ? `索引 ${st.sessions} 会话 / ${st.messages} 条 · ${(st.dbSize/1048576).toFixed(0)}MB`
+    : '索引为空，请点「刷新」';
+}
+
+async function loadList(){
+  setCount('加载中…', true);
+  const agent = $('#agentFilter').value || null;
+  const { rows, total } = await invoke('list', {
+    agent, order: $('#orderSel').value, dir: $('#dirSel').value, limit: 200,
+  });
+  setCount(`显示 ${rows.length} / 共 ${total}`, false);
+  const box = $('#list');
+  const keep = box.scrollTop;
+  box.innerHTML = '';
+  if(!rows.length){ box.innerHTML = '<div class="empty">没有会话</div>'; return; }
+  for(const r of rows){
+    const d = document.createElement('div');
+    d.className = 'item' + (current && r.uid===current.uid ? ' active' : '');
+    const tk = (parseMeta(r.meta_json).tokens||{}).total;
+    d.innerHTML = `<div class="t">${esc(r.title||'(无标题)')}</div>
+      <div class="m"><span class="pill blue">${esc(agentLabels[r.agent]||r.agent)}</span>
+      <span>${r.msg_count} 条</span>${tk?`<span>≈${fmtTok(tk)} tok</span>`:''}<span>${ts(r.updated_at)}</span></div>
+      <div class="m" style="margin-top:2px;font-size:11px">${esc(r.project_path||'未知项目')}</div>`;
+    d.onclick = () => openSession(r.uid, d);
+    box.appendChild(d);
+  }
+  box.scrollTop = keep;
+}
+
+function setCount(text, busy){
+  const el = $('#listCount');
+  el.classList.toggle('busy', !!busy);
+  el.innerHTML = (busy ? '<span class="spin"></span>' : '') + esc(text);
+}
+
+async function doSearch(){
+  const q = $('#q').value.trim();
+  if(!q){ await loadList(); return; }
+  setCount('检索中…', true);
+  const agent = $('#agentFilter').value || null;
+  const r = await invoke('search', { query: q, agent, limit: 200 });
+  setCount(`命中 ${r.hits.length} 个会话 · ${r.total_matches} 处消息`, false);
+  const box = $('#list'); box.innerHTML = '';
+  if(!r.hits.length){ box.innerHTML = '<div class="empty">没有匹配的消息</div>'; return; }
+  for(const h of r.hits){
+    const d = document.createElement('div');
+    d.className = 'item';
+    d.innerHTML = `<div class="t">${esc(h.title||'(无标题)')}</div>
+      <div class="m"><span class="pill blue">${esc(agentLabels[h.agent]||h.agent)}</span>
+      ${h.match_count>1?`<span class="pill">${h.match_count} 处</span>`:''}
+      <span>${ts(h.ts)}</span></div>
+      <div class="m" style="margin-top:3px;color:#5f5e5a;font-size:11.5px">${esc((h.text||'').slice(0,120))}</div>`;
+    d.onclick = () => openSession(h.uid, d);
+    box.appendChild(d);
+  }
+}
+
+async function openSession(uid, el){
+  document.querySelectorAll('.item.active').forEach(x=>x.classList.remove('active'));
+  if(el) el.classList.add('active');
+  const data = await invoke('show', { uid });
+  if(!data){ $('#detail').innerHTML = '<div class="empty">读取失败</div>'; return; }
+  const s = data.session;
+  current = { uid, session: s };
+  $('#detailTitle').textContent = s.title || '(无标题)';
+  const tk = (parseMeta(s.meta_json).tokens)||null;
+  const tkRow = tk && tk.total ? `<tr><td>Tokens</td><td>输入 ${fmtTok(tk.input)||0} · 输出 ${fmtTok(tk.output)||0} · 共 ${fmtTok(tk.total)}${Number(tk.costUsd)>0?` · ≈$${tk.costUsd.toFixed(2)}`:''}</td></tr>` : '';
+  const parts = [`<div class="meta"><table>
+    <tr><td>Agent</td><td><code>${esc(agentLabels[s.agent]||s.agent)}</code></td></tr>
+    <tr><td>会话 ID</td><td><code>${esc(s.session_id)}</code></td></tr>
+    <tr><td>项目路径</td><td><code>${esc(s.project_path||'未知')}</code></td></tr>
+    <tr><td>创建/更新</td><td>${ts(s.created_at)} / ${ts(s.updated_at)}</td></tr>
+    <tr><td>消息条数</td><td>${data.messages.length}</td></tr>${tkRow}</table></div>`];
+  const BATCH = 200;
+  const first = data.messages.slice(0, BATCH);
+  parts.push(...first.map(msgHtml));
+  $('#detail').innerHTML = parts.join('');
+  $('#detail').scrollTop = 0;
+  for(let i = BATCH; i < data.messages.length; i += BATCH){
+    await new Promise(r=>setTimeout(r,0));
+    $('#detail').insertAdjacentHTML('beforeend', data.messages.slice(i,i+BATCH).map(msgHtml).join(''));
+  }
+  $('#btnTerm').disabled = !s.project_path;
+}
+
+function setAuto(on){
+  clearInterval(autoTimer); autoTimer = null;
+  if(on) autoTimer = setInterval(()=>doRefresh().catch(console.error), Number($('#autoEvery').value)*1000);
+}
+
+async function doRefresh(){
+  if(refreshing) return;
+  refreshing = true;
+  const btn = $('#btnRefresh');
+  btn.disabled = true; btn.textContent = '刷新中…';
+  setCount('正在扫描会话来源…', true);
+  try{
+    const r = await invoke('refresh');
+    await loadStats();
+    setCount(`显示 ${(await invoke('list',{agent:$('#agentFilter').value||null,order:$('#orderSel').value,dir:$('#dirSel').value,limit:200})).rows.length} 个会话`, false);
+    await loadList();
+    $('#stRefresh').textContent = `上次刷新 ${ts(Date.now())} · 新增/更新 ${r.indexed} · 跳过 ${r.skipped}`;
+  }catch(e){
+    $('#stRefresh').textContent = '刷新失败：' + e;
+  }finally{
+    btn.disabled = false; btn.textContent = '↻ 刷新';
+    refreshing = false;
+  }
+}
+
+$('#btnRefresh').onclick = doRefresh;
+$('#btnSearch').onclick = doSearch;
+$('#q').addEventListener('keydown', e => { if(e.key==='Enter') doSearch(); });
+$('#orderSel').onchange = () => $('#q').value.trim() ? doSearch() : loadList();
+$('#dirSel').onchange = () => $('#q').value.trim() ? doSearch() : loadList();
+$('#agentFilter').onchange = () => $('#q').value.trim() ? doSearch() : loadList();
+$('#autoRefresh').onchange = e => setAuto(e.target.checked);
+$('#autoEvery').onchange = () => { if($('#autoRefresh').checked) setAuto(true); };
+
+$('#btnTerm').onclick = () => {
+  if(!current) return;
+  const s = current.session;
+  const dir = s.project_path;
+  if(!dir) return;
+  const sid = s.session_id;
+  const cli = RESUME[s.agent];
+  if(!cli){
+    openDlg(`<h3>在终端中打开</h3><div class="row">目录：<code>${esc(dir)}</code></div>
+      <div class="row">续接命令未登记，打开后请自行输入。</div>
+      <div class="foot"><button onclick="closeDlg()">取消</button><button class="primary" id="go">打开终端</button></div>`);
+    $('#go').onclick = () => goTerm(dir, '');
+    return;
+  }
+  const build = () => {
+    const mode = document.querySelector('input[name="m"]:checked').value;
+    const yolo = $('#yolo').checked;
+    const base = mode==='last' ? cli.last : cli.resume(sid);
+    return yolo ? `${cli.bin} ${base} ${cli.yolo}` : `${cli.bin} ${base}`;
+  };
+  openDlg(`<h3>在终端中继续会话</h3>
+    <div class="row">目录：<code>${esc(dir)}</code></div>
+    <div class="row"><label><input type="radio" name="m" value="resume" checked> 恢复该会话（<code>${esc(cli.bin)} ${esc(cli.resume(sid))}</code>）</label></div>
+    <div class="row"><label><input type="radio" name="m" value="last"> 继续最近（<code>${esc(cli.bin)} ${esc(cli.last)}</code>）</label></div>
+    <div class="row"><label><input type="checkbox" id="yolo"> ${esc(cli.yoloLabel)}</label></div>
+    <div class="warn">跳过权限意味着 Agent 可以不经询问直接改文件、跑命令，请只在可信项目里使用。</div>
+    <div class="row">命令预览：<code id="pv"></code></div>
+    <div class="foot"><button onclick="closeDlg()">取消</button><button class="primary" id="go">打开终端</button></div>`);
+  const sync = () => { $('#pv').textContent = build(); };
+  document.querySelectorAll('input[name="m"]').forEach(r=>r.onchange=sync);
+  $('#yolo').onchange = sync; sync();
+  $('#go').onclick = () => goTerm(dir, build());
+};
+async function goTerm(dir, command){
+  const r = await invoke('open_terminal', { dir, command });
+  closeDlg();
+  $('#stRefresh').textContent = r.ok ? `已打开终端（${r.via==='wt'?'Windows Terminal':'cmd'}）${command?'：'+command:''}` : '打开终端失败：'+(r.error||'');
+}
+
+window.closeDlg = closeDlg;
+loadAgents().then(loadStats).then(loadList).catch(e => { $('#stAgents').textContent = '初始化失败：'+e; });
+</script>
+</body>
+</html>
