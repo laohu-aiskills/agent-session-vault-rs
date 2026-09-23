@@ -28,7 +28,7 @@ fn with_index<T>(f: impl FnOnce(&IndexDb) -> T) -> Result<T, String> {
 }
 
 #[tauri::command]
-fn agents(state: tauri::State<'_, AppState>) -> Result<Value, String> {
+async fn agents(state: tauri::State<'_, AppState>) -> Result<Value, String> {
     let mut provs = state.providers.lock().map_err(|e| e.to_string())?;
     let d = scan::discover_all(&mut provs);
     let agents: Vec<Value> = d
@@ -47,12 +47,12 @@ fn agents(state: tauri::State<'_, AppState>) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn stats() -> Result<Value, String> {
+async fn stats() -> Result<Value, String> {
     with_index(|db| db.stats())
 }
 
 #[tauri::command]
-fn refresh(state: tauri::State<'_, AppState>, app: tauri::AppHandle) -> Result<Value, String> {
+async fn refresh(state: tauri::State<'_, AppState>, app: tauri::AppHandle) -> Result<Value, String> {
     let mut provs = state.providers.lock().map_err(|e| e.to_string())?;
     let db = IndexDb::open(&index_path()).map_err(|e| e.to_string())?;
     let r = scan::build_index(&mut provs, &db, false, |agent, skipped, msgs| {
@@ -77,7 +77,7 @@ fn refresh(state: tauri::State<'_, AppState>, app: tauri::AppHandle) -> Result<V
 }
 
 #[tauri::command]
-fn list(agent: Option<String>, order: Option<String>, dir: Option<String>, limit: Option<i64>) -> Result<Value, String> {
+async fn list(agent: Option<String>, order: Option<String>, dir: Option<String>, limit: Option<i64>) -> Result<Value, String> {
     with_index(|db| {
         let opts = ListOpts {
             agent,
@@ -93,18 +93,18 @@ fn list(agent: Option<String>, order: Option<String>, dir: Option<String>, limit
 }
 
 #[tauri::command]
-fn search(query: String, agent: Option<String>, limit: Option<i64>) -> Result<Value, String> {
+async fn search(query: String, agent: Option<String>, limit: Option<i64>) -> Result<Value, String> {
     with_index(|db| db.search(&query, agent.as_deref(), None, None, limit.unwrap_or(200)))
 }
 
 #[tauri::command]
-fn show(uid: String) -> Result<Option<Value>, String> {
+async fn show(uid: String) -> Result<Option<Value>, String> {
     with_index(|db| db.get_session(&uid).map(|(s, m)| json!({ "session": s, "messages": m })))
 }
 
 /// 在项目目录打开终端（claude/codex 续接命令由前端拼好传进来）。
 #[tauri::command]
-fn open_terminal(dir: String, command: Option<String>) -> Result<Value, String> {
+async fn open_terminal(dir: String, command: Option<String>) -> Result<Value, String> {
     use std::process::{Command, Stdio};
     if !std::path::Path::new(&dir).exists() {
         return Ok(json!({ "ok": false, "error": format!("目录不存在：{dir}") }));
