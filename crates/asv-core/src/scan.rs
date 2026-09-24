@@ -89,11 +89,14 @@ pub fn build_index(
     let mut skipped = 0usize;
     let mut failed = 0usize;
 
-    // 索引库里有、这次扫描没再出现的会话 → 源已删除，清理掉
+    // 索引库里有、这次扫描没再出现的会话 → 源已删除，清理掉。
+    // 只清理本次扫描覆盖的 agent：--agent 过滤时其它 agent 的会话不归这次管
     let live: std::collections::HashSet<&str> = sessions.iter().map(|s| s.uid.as_str()).collect();
+    let scanned_agents: std::collections::HashSet<&str> = providers.iter().map(|p| p.id()).collect();
     let mut pruned = 0usize;
     for uid in index.all_uids() {
-        if !live.contains(uid.as_str()) {
+        let agent = uid.split(':').next().unwrap_or("");
+        if scanned_agents.contains(agent) && !live.contains(uid.as_str()) {
             index.remove_session(&uid)?;
             pruned += 1;
         }

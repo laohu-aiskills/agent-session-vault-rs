@@ -32,6 +32,39 @@ fn payload_text(payload: &Value) -> String {
     String::new()
 }
 
+/// Codex Desktop 会把环境上下文写成 response_item/user「消息」，
+/// 这些是注入不是用户输入，进索引只会污染检索结果。
+const CODEX_NOISE_PREFIX: [&str; 10] = [
+    "<recommended_plugins", "<environment_context", "<user_instructions", "<turn_context",
+    "<permissions", "<system-reminder", "<skill ", "<identity_context", "<INSTRUCTIONS",
+    "# AGENTS.md",
+];
+
+fn is_codex_noise(t: &str) -> bool {
+    let s = t.trim_start();
+    CODEX_NOISE_PREFIX.iter().any(|p| s.starts_with(p))
+}
+
+/// 相邻同角色同类型碎段合并（Desktop 流式写入会把一条回复拆成多条 message）。
+fn merge_adjacent(mut msgs: Vec<Message>) -> Vec<Message> {
+    let mut out: Vec<Message> = Vec::with_capacity(msgs.len());
+    for mut m in msgs.drain(..) {
+        if let Some(prev) = out.last_mut() {
+            if prev.kind == m.kind
+                && prev.role == m.role
+                && (m.kind == "text" || m.kind == "reasoning")
+                && prev.tool_name == m.tool_name
+            {
+                prev.text.push_str("\n\n");
+                prev.text.push_str(&m.text);
+                continue;
+            }
+        }
+        out.push(m);
+    }
+    out
+}
+
 /// response_item → 0..N 条消息。
 fn map_response_item(payload: &Value, ts: Option<i64>, seq_start: i64) -> Vec<Message> {
     let mut out = Vec::new();
@@ -51,7 +84,7 @@ fn map_response_item(payload: &Value, ts: Option<i64>, seq_start: i64) -> Vec<Me
                     .iter()
                     .find_map(|k| b.get(k).and_then(|v| v.as_str()))
                     .unwrap_or("");
-                if !text.is_empty() {
+                if !text.is_empty() && !(role == "user" && is_codex_noise(text)) {
                     out.push(Message::new(seq, role, "text", ts, text));
                     seq += 1;
                     emitted = true;
@@ -60,7 +93,7 @@ fn map_response_item(payload: &Value, ts: Option<i64>, seq_start: i64) -> Vec<Me
         }
         if !emitted && !payload.get("content").map(|v| v.is_array()).unwrap_or(false) {
             let fallback = payload_text(payload);
-            if !fallback.is_empty() {
+            if !fallback.is_empty() && !(role == "user" && is_codex_noise(&fallback)) {
                 out.push(Message::new(seq, role, "text", ts, fallback));
             }
         }
@@ -149,6 +182,24 @@ impl CodexProvider {
 
     pub fn discover(&self) -> Vec<Session> {
         let mut sessions = Vec::new();
+        // Codex Desktop 的会话名（thread_name）单独存在 session_index.jsonl，
+        // 是标题的权威来源——没有它，Desktop 会话在列表里全是「(无标题)」
+        let mut titles: std::collections::HashMap<String, String> = Default::default();
+        let index_file = util::expand_home("~/.codex/session_index.jsonl");
+        if let Ok(text) = std::fs::read_to_string(&index_file) {
+            for line in text.lines() {
+                if let Ok(o) = serde_json::from_str::<Value>(line) {
+                    if let (Some(id), Some(name)) = (
+                        o.get("id").and_then(|v| v.as_str()),
+                        o.get("thread_name").and_then(|v| v.as_str()),
+                    ) {
+                        if !name.is_empty() {
+                            titles.insert(id.to_string(), name.to_string());
+                        }
+                    }
+                }
+            }
+        }
         for file in util::walk_files(&self.root, &["jsonl"], 12) {
             let Ok(st) = fs::metadata(&file) else { continue };
             if st.len() == 0 {
@@ -175,7 +226,7 @@ impl CodexProvider {
                 // response_item/message 里多为 AGENTS.md 注入噪声
                 if otype == "event_msg" && ptype == "user_message" {
                     let t = payload_text(p);
-                    if !t.is_empty() {
+                    if !t.is_empty() && !is_codex_noise(&t) {
                         user_texts.push(t);
                     }
                 } else if otype == "response_item" && ptype == "message" {
@@ -183,7 +234,9 @@ impl CodexProvider {
                         if let Some(content) = p.get("content").and_then(|v| v.as_array()) {
                             for b in content {
                                 if let Some(s) = b.get("text").and_then(|v| v.as_str()) {
-                                    user_texts.push(s.to_string());
+                                    if !is_codex_noise(s) {
+                                        user_texts.push(s.to_string());
+                                    }
                                 }
                             }
                         }
@@ -222,10 +275,10 @@ impl CodexProvider {
             sessions.push(Session {
                 uid: format!("codex:{sid}"),
                 agent: "codex".into(),
-                session_id: sid,
+                session_id: sid.clone(),
                 project_path: meta.as_ref().and_then(|m| m.get("cwd")).and_then(|v| v.as_str()).map(String::from),
                 path_source: if meta.as_ref().and_then(|m| m.get("cwd")).is_some() { "content".into() } else { "unknown".into() },
-                title,
+                title: titles.get(&sid).cloned().or(title),
                 created_at: meta
                     .as_ref()
                     .and_then(|m| util::to_ms(m.get("timestamp")))
@@ -294,7 +347,7 @@ impl CodexProvider {
             true
         })?;
         let meta = totals.map(|t| serde_json::json!({ "tokens": t }));
-        Ok((msgs, None, meta))
+        Ok((merge_adjacent(msgs), None, meta))
     }
 
     pub fn original_paths(&self, session: &Session) -> Vec<PathBuf> {
