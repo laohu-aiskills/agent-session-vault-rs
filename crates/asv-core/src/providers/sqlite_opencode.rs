@@ -191,9 +191,23 @@ impl SqliteOpencodeProvider {
 
     pub fn parse(&self, session: &Session) -> anyhow::Result<(Vec<Message>, Option<String>, Option<serde_json::Value>)> {
         let (con, _guard) = self.open_with_fallback()?;
-        let mut msgs = con.prepare(
-            "select id, time_created, data from message where session_id = ?1 order by time_created asc, sequence asc",
-        )?
+        // opencode 官方库没有 sequence 列（zcode 有），动态探测排序键
+        let table_cols = |t: &str| -> Vec<String> {
+            con.prepare(&format!("PRAGMA table_info({t})"))
+                .map(|mut s| {
+                    s.query_map([], |r| r.get::<_, String>(1))
+                        .map(|rows| rows.flatten().collect())
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default()
+        };
+        let msg_has_seq = table_cols("message").contains(&"sequence".to_string());
+        let part_has_seq = table_cols("part").contains(&"sequence".to_string());
+        let msg_sql = format!(
+            "select id, time_created, data from message where session_id = ?1 order by time_created asc{}",
+            if msg_has_seq { ", sequence asc" } else { "" }
+        );
+        let mut msgs = con.prepare(&msg_sql)?
         .query_map([&session.session_id], |r| {
             Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, String>(2)?))
         })?
@@ -205,9 +219,11 @@ impl SqliteOpencodeProvider {
         for (id, mtime, data) in msgs.drain(..) {
             let mdata: Value = serde_json::from_str(&data).unwrap_or(serde_json::json!({}));
             let role = if mdata.get("role").and_then(|v| v.as_str()) == Some("user") { "user" } else { "assistant" };
-            let mut stmt = con.prepare(
-                "select time_created, data from part where message_id = ?1 order by sequence asc, time_created asc",
-            )?;
+            let part_sql = format!(
+                "select time_created, data from part where message_id = ?1 order by {}time_created asc",
+                if part_has_seq { "sequence asc, " } else { "" }
+            );
+            let mut stmt = con.prepare(&part_sql)?;
             let parts = stmt
                 .query_map([id], |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, String>(1)?)))?
                 .flatten()

@@ -174,7 +174,7 @@ async function loadList(){
   setCount('加载中…', true);
   const agent = $('#agentFilter').value || null;
   const { rows, total } = await invoke('list', {
-    agent, order: $('#orderSel').value, dir: $('#dirSel').value, limit: 200,
+    agent, order: $('#orderSel').value, dir: $('#dirSel').value, limit: 2000,
   });
   setCount(`显示 ${rows.length} / 共 ${total}`, false);
   const box = $('#list');
