@@ -270,13 +270,18 @@ impl IndexDb {
         }
         let col = if opts.order == "created" { "created_at" } else { "updated_at" };
         let dir = if opts.dir.eq_ignore_ascii_case("asc") { "asc" } else { "desc" };
+        // limit <= 0 视为不限制
+        let limit_sql = if opts.limit > 0 {
+            format!(" limit {} offset {}", opts.limit, opts.offset)
+        } else {
+            String::new()
+        };
         let sql = format!(
-            "select * from sessions {} order by {} {} limit {} offset {}",
+            "select * from sessions {} order by {} {}{}",
             if where_parts.is_empty() { String::new() } else { format!("where {}", where_parts.join(" and ")) },
             col,
             dir,
-            opts.limit,
-            opts.offset,
+            limit_sql,
         );
         let params_ref: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|b| b.as_ref()).collect();
         self.con
@@ -435,7 +440,9 @@ impl IndexDb {
                 }
             }
         }
-        by_uid.truncate(limit as usize);
+        if limit > 0 {
+            by_uid.truncate(limit as usize);
+        }
         json!({ "mode": mode, "hits": by_uid, "total_matches": total, "truncated": total >= raw_limit })
     }
 }

@@ -174,14 +174,14 @@ async function loadList(){
   setCount('加载中…', true);
   const agent = $('#agentFilter').value || null;
   const { rows, total } = await invoke('list', {
-    agent, order: $('#orderSel').value, dir: $('#dirSel').value, limit: 2000,
+    agent, order: $('#orderSel').value, dir: $('#dirSel').value, limit: 0,
   });
   setCount(`显示 ${rows.length} / 共 ${total}`, false);
   const box = $('#list');
   const keep = box.scrollTop;
   box.innerHTML = '';
   if(!rows.length){ box.innerHTML = '<div class="empty">没有会话</div>'; return; }
-  for(const r of rows){
+  const build = (r) => {
     const d = document.createElement('div');
     d.className = 'item' + (current && r.uid===current.uid ? ' active' : '');
     const tk = (parseMeta(r.meta_json).tokens||{}).total;
@@ -190,9 +190,21 @@ async function loadList(){
       <span>${r.msg_count} 条</span>${tk?`<span>≈${fmtTok(tk)} tok</span>`:''}<span>${ts(r.updated_at)}</span></div>
       <div class="m" style="margin-top:2px;font-size:11px">${esc(r.project_path||'未知项目')}</div>`;
     d.onclick = () => openSession(r.uid, d);
-    box.appendChild(d);
-  }
+    return d;
+  };
+  const BATCH = 500;
+  const frag = document.createDocumentFragment();
+  for(let i = 0; i < Math.min(BATCH, rows.length); i++) frag.appendChild(build(rows[i]));
+  box.appendChild(frag);
   box.scrollTop = keep;
+  (async () => {
+    for(let i = BATCH; i < rows.length; i += BATCH){
+      await new Promise(r=>setTimeout(r,0));
+      const f2 = document.createDocumentFragment();
+      for(let j = i; j < Math.min(i+BATCH, rows.length); j++) f2.appendChild(build(rows[j]));
+      box.appendChild(f2);
+    }
+  })();
 }
 
 function setCount(text, busy){

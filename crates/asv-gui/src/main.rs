@@ -82,7 +82,7 @@ async fn list(agent: Option<String>, order: Option<String>, dir: Option<String>,
         let opts = ListOpts {
             agent,
             project: None,
-            limit: limit.unwrap_or(200),
+            limit: limit.unwrap_or(0),
             offset: 0,
             order: order.unwrap_or_else(|| "updated".into()),
             dir: dir.unwrap_or_else(|| "desc".into()),

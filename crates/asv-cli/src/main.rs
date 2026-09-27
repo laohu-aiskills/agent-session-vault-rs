@@ -43,6 +43,7 @@ enum Cmd {
         agent: Option<String>,
         #[arg(long)]
         project: Option<String>,
+        /// 每页数量，0 = 全部
         #[arg(long, default_value_t = 30)]
         limit: i64,
         /// updated | created
