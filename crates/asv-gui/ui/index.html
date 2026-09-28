@@ -337,7 +337,12 @@ async function goTerm(dir, command){
 }
 
 window.closeDlg = closeDlg;
-loadAgents().then(loadStats).then(loadList).catch(e => { $('#stAgents').textContent = '初始化失败：'+e; });
+(async () => {
+  await invoke('ping');   // 冒烟标记：IPC 链路通即置位
+  await loadAgents();
+  await loadStats();
+  await loadList();
+})().catch(e => { $('#stAgents').textContent = '初始化失败：'+e; });
 </script>
 </body>
 </html>

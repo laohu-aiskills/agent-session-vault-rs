@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -10,6 +11,15 @@ use serde_json::{json, Value};
 use asv_core::index_db::{IndexDb, ListOpts};
 use asv_core::providers::{self, Provider};
 use asv_core::scan;
+
+/// 前端 boot 完成后调 ping() 置位；--smoke-exit 据此判定 UI 链路是否可用
+static BOOT_OK: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn ping() -> Value {
+    BOOT_OK.store(true, Ordering::SeqCst);
+    json!({ "ok": true })
+}
 
 struct AppState {
     providers: Mutex<Vec<Provider>>,
@@ -136,9 +146,28 @@ async fn open_terminal(dir: String, command: Option<String>) -> Result<Value, St
 }
 
 fn main() {
+    let smoke = std::env::args().any(|a| a == "--smoke-exit");
     tauri::Builder::default()
         .manage(AppState { providers: Mutex::new(providers::all()) })
-        .invoke_handler(tauri::generate_handler![agents, stats, refresh, list, search, show, open_terminal])
+        .invoke_handler(tauri::generate_handler![ping, agents, stats, refresh, list, search, show, open_terminal])
+        .setup(move |app| {
+            if smoke {
+                // 冒烟：UI boot 跑通（ping 被调用）→ 0；超时 → 1
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    while std::time::Instant::now() < deadline {
+                        if BOOT_OK.load(Ordering::SeqCst) {
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+                            handle.exit(0);
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
+                    handle.exit(1);
+                });
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
