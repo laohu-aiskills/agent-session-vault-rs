@@ -1,0 +1,3 @@
+# MSVC 构建静态链接 CRT：产物不再依赖目标机的 VC++ Redistributable
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
